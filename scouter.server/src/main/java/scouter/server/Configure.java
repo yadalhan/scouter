@@ -266,6 +266,20 @@ public class Configure extends Thread {
 	public String log_dir = "./logs";
 	@ConfigDesc("Path to plugin directory")
 	public String plugin_dir = "./plugin";
+
+	//PostgreSQL Database
+	@ConfigDesc("Enable PostgreSQL database backend")
+	public boolean postgresql_enabled = false;
+	@ConfigDesc("PostgreSQL JDBC URL")
+	public String postgresql_url = "jdbc:postgresql://localhost:5432/scouter";
+	@ConfigDesc("PostgreSQL database user")
+	public String postgresql_user = "scouter";
+	@ConfigDesc("PostgreSQL database password")
+	public String postgresql_password = "scouter_password";
+	@ConfigDesc("PostgreSQL connection pool size")
+	public int postgresql_pool_size = 20;
+	@ConfigDesc("PostgreSQL connection timeout (ms)")
+	public long postgresql_timeout = 30000;
 	@ConfigDesc("Script plugin enabled")
 	public boolean plugin_enabled = true;
 	@ConfigDesc("Path to client related directory")
@@ -717,6 +731,13 @@ public class Configure extends Thread {
 		this.db_dir = getValue("db_dir", "./database");
 		this.log_dir = getValue("log_dir", "./logs");
 		this.plugin_dir = getValue("plugin_dir", "./plugin");
+
+		this.postgresql_enabled = getBoolean("postgresql_enabled", false);
+		this.postgresql_url = getValue("postgresql_url", "jdbc:postgresql://localhost:5432/scouter");
+		this.postgresql_user = getValue("postgresql_user", "scouter");
+		this.postgresql_password = getValue("postgresql_password", "scouter_password");
+		this.postgresql_pool_size = getInt("postgresql_pool_size", 20);
+		this.postgresql_timeout = getLong("postgresql_timeout", 30000);
 		this.plugin_enabled = getBoolean("plugin_enabled", true);
 		this.client_dir = getValue("client_dir", "./client");
 		this.temp_dir = getValue("temp_dir", "./tempdata");

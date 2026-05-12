@@ -24,15 +24,46 @@ import java.util.Vector
 import scouter.io.DataOutputX
 import scouter.server.db.xlog.XLogDataReader
 import scouter.server.db.xlog.XLogIndex
+import scouter.server.db.xlog.PostgreSQLXLogReader
+import scouter.server.Configure
 import scouter.util.FileUtil
 import scouter.server.db.io.IndexTimeFile
 
 object XLogRD {
+    // PostgreSQL 사용 여부 확인
+    private val conf = Configure.getInstance()
+    private val usePostgreSQL = conf.postgresql_enabled
 
     /**
       * read xlog in limited count in time
       */
     def readByTimeLimitCount(date: String, fromTime: Long, toTime: Long, lastBucketTime: Long, limitCount: Int, handler: (Long, Array[Byte]) => Int) {
+        if (usePostgreSQL) {
+            readByTimeLimitCountPostgreSQL(date, fromTime, toTime, lastBucketTime, limitCount, handler)
+        } else {
+            readByTimeLimitCountFileSystem(date, fromTime, toTime, lastBucketTime, limitCount, handler)
+        }
+    }
+
+    // PostgreSQL 시간 범위 제한 조회
+    private def readByTimeLimitCountPostgreSQL(date: String, fromTime: Long, toTime: Long, lastBucketTime: Long, limitCount: Int, handler: (Long, Array[Byte]) => Int) {
+        val reader = PostgreSQLXLogReader.open(date)
+        try {
+            val results = reader.readByTimeRange(fromTime, toTime)
+            var count = 0
+            results.foreach { case (time, bytes) =>
+                if (count < limitCount) {
+                    handler(time, bytes)
+                    count += 1
+                }
+            }
+        } finally {
+            reader.close()
+        }
+    }
+
+    // 파일 시스템 시간 범위 제한 조회
+    private def readByTimeLimitCountFileSystem(date: String, fromTime: Long, toTime: Long, lastBucketTime: Long, limitCount: Int, handler: (Long, Array[Byte]) => Int) {
         val path = XLogWR.getDBPath(date);
         if (new File(path).canRead()) {
             val file = path + "/" + XLogWR.prefix;
@@ -53,6 +84,28 @@ object XLogRD {
     }
 
     def readByTime(date: String, fromTime: Long, toTime: Long, handler: (Long, Array[Byte]) => Any) {
+        if (usePostgreSQL) {
+            readByTimePostgreSQL(date, fromTime, toTime, handler)
+        } else {
+            readByTimeFileSystem(date, fromTime, toTime, handler)
+        }
+    }
+
+    // PostgreSQL 시간 범위 조회
+    private def readByTimePostgreSQL(date: String, fromTime: Long, toTime: Long, handler: (Long, Array[Byte]) => Any) {
+        val reader = PostgreSQLXLogReader.open(date)
+        try {
+            val results = reader.readByTimeRange(fromTime, toTime)
+            results.foreach { case (time, bytes) =>
+                handler(time, bytes)
+            }
+        } finally {
+            reader.close()
+        }
+    }
+
+    // 파일 시스템 시간 범위 조회
+    private def readByTimeFileSystem(date: String, fromTime: Long, toTime: Long, handler: (Long, Array[Byte]) => Any) {
         val path = XLogWR.getDBPath(date);
         if (new File(path).canRead()) {
             val file = path + "/" + XLogWR.prefix;
@@ -93,6 +146,29 @@ object XLogRD {
     }
 
     def getByTxid(date: String, txid: Long): Array[Byte] = {
+        if (usePostgreSQL) {
+            return getByTxidPostgreSQL(date, txid)
+        } else {
+            return getByTxidFileSystem(date, txid)
+        }
+    }
+
+    // PostgreSQL 트랜잭션 ID 조회
+    private def getByTxidPostgreSQL(date: String, txid: Long): Array[Byte] = {
+        val reader = PostgreSQLXLogReader.open(date)
+        try {
+            val results = reader.readByTxid(txid)
+            if (results.nonEmpty) {
+                return results.head
+            }
+            return null
+        } finally {
+            reader.close()
+        }
+    }
+
+    // 파일 시스템 트랜잭션 ID 조회
+    private def getByTxidFileSystem(date: String, txid: Long): Array[Byte] = {
         val path = XLogWR.getDBPath(date);
         if (new File(path).canRead() == false) {
             return null;

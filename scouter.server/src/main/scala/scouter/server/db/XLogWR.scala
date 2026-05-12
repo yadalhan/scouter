@@ -21,7 +21,7 @@ package scouter.server.db;
 import java.io.File
 
 import scouter.server.core.ServerStat
-import scouter.server.db.xlog.{XLogDataWriter, XLogIndex}
+import scouter.server.db.xlog.{XLogDataWriter, XLogIndex, PostgreSQLXLogWriter}
 import scouter.server.util.{OftenAction, ThreadScala}
 import scouter.server.{Configure, Logger}
 import scouter.util.{DateUtil, FileUtil, RequestQueue, ThreadUtil}
@@ -35,6 +35,10 @@ object XLogWR {
     val MAX_IDLE = 30 * 60 * 1000L
     val dir = "/xlog"
     val prefix = "xlog"
+
+    // PostgreSQL 사용 여부 확인
+    private val conf = Configure.getInstance()
+    private val usePostgreSQL = conf.postgresql_enabled
 
     val queue = new RequestQueue[XLogData](Configure.getInstance().xlog_queue_size)
     val dailyContainer = mutable.Map[Long, StorageContainer]()
@@ -55,25 +59,12 @@ object XLogWR {
 
             ServerStat.put("xlog.db.queue",queue.size())
             try {
-                val currentDateUnit = DateUtil.getDateUnit(m.time)
-                val container = dailyContainer.getOrElseUpdate(currentDateUnit, {
-                    val (index, writer) = open(m.time)
-                    StorageContainer(MAX_IDLE, System.currentTimeMillis(), index, writer)
-                })
-
-                if (container.index == null) {
-                    OftenAction.act("XLoWR", 10) {
-                        dailyContainer.remove(currentDateUnit)
-                        queue.clear()
-                    }
-                    Logger.println("SZ143", 10, "can't open XLoWR")
-
+                if (usePostgreSQL) {
+                    // PostgreSQL 쓰기 로직
+                    writePostgreSQL(m)
                 } else {
-                    container.lastAccess = System.currentTimeMillis()
-                    val location = container.writer.write(m.data)
-                    container.index.setByTime(m.time, location)
-                    container.index.setByTxid(m.txid, location)
-                    container.index.setByGxid(m.gxid, location)
+                    // 기존 파일 기반 쓰기 로직
+                    writeFileSystem(m)
                 }
 
             } catch {
@@ -87,6 +78,41 @@ object XLogWR {
         val ok = queue.put(XLogData(time, tid, gid, elapsed, data))
         if (!ok) {
             Logger.println("S144", 10, "queue exceeded!!")
+        }
+    }
+
+    // PostgreSQL 쓰기 메서드
+    private def writePostgreSQL(data: XLogData): Unit = {
+        val date = DateUtil.yyyymmdd(data.time)
+        val writer = PostgreSQLXLogWriter.open(date)
+        try {
+            writer.write(data.time, data.txid, data.gxid, data.elapsed, data.data)
+        } finally {
+            writer.close()
+        }
+    }
+
+    // 파일 시스템 쓰기 메서드
+    private def writeFileSystem(data: XLogData): Unit = {
+        val currentDateUnit = DateUtil.getDateUnit(data.time)
+        val container = dailyContainer.getOrElseUpdate(currentDateUnit, {
+            val (index, writer) = open(data.time)
+            StorageContainer(MAX_IDLE, System.currentTimeMillis(), index, writer)
+        })
+
+        if (container.index == null) {
+            OftenAction.act("XLoWR", 10) {
+                dailyContainer.remove(currentDateUnit)
+                queue.clear()
+            }
+            Logger.println("SZ143", 10, "can't open XLoWR")
+
+        } else {
+            container.lastAccess = System.currentTimeMillis()
+            val location = container.writer.write(data.data)
+            container.index.setByTime(data.time, location)
+            container.index.setByTxid(data.txid, location)
+            container.index.setByGxid(data.gxid, location)
         }
     }
 

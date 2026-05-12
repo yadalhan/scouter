@@ -31,6 +31,9 @@ import scouter.util.IClose;
 
 object XLogProfileDataWriter {
     val table = new Hashtable[String, XLogProfileDataWriter]();
+    // PostgreSQL 사용 여부 확인
+    private val conf = Configure.getInstance()
+    private val usePostgreSQL = conf.postgresql_enabled
 
     def open(date: String, file: String): XLogProfileDataWriter = {
         table.synchronized {
@@ -50,6 +53,8 @@ class XLogProfileDataWriter(date: String, file: String) extends IClose {
 
     var refrence = 0;
     val conf = Configure.getInstance();
+    // PostgreSQL 사용 여부 확인
+    private val usePostgreSQL = conf.postgresql_enabled
 
     var gzip = conf.compress_profile_enabled
 
@@ -71,7 +76,39 @@ class XLogProfileDataWriter(date: String, file: String) extends IClose {
     def write(bytes: Any): Long = {
         return write(bytes.asInstanceOf[Array[Byte]]);
     }
+    
+    def write(time: Long, txid: Long, bytes: Array[Byte]): Long = {
+        if (usePostgreSQL) {
+            // PostgreSQL 쓰기
+            return writePostgreSQL(time, txid, bytes)
+        } else {
+            // 파일 기반 쓰기
+            return writeFileSystem(bytes)
+        }
+    }
+    
     def write(bytes: Array[Byte]): Long = {
+        if (usePostgreSQL) {
+            // PostgreSQL 쓰기 (txid=0, time=현재시간)
+            return writePostgreSQL(System.currentTimeMillis(), 0L, bytes)
+        } else {
+            // 파일 기반 쓰기
+            return writeFileSystem(bytes)
+        }
+    }
+    
+    // PostgreSQL 쓰기 메서드
+    private def writePostgreSQL(time: Long, txid: Long, bytes: Array[Byte]): Long = {
+        val pgWriter = PostgreSQLXLogProfileWriter.open(date)
+        try {
+            return pgWriter.write(time, txid, bytes)
+        } finally {
+            pgWriter.close()
+        }
+    }
+    
+    // 파일 시스템 쓰기 메서드
+    private def writeFileSystem(bytes: Array[Byte]): Long = {
         if (gzip) {
             return GZipStore.getInstance().write(date, bytes);
         }
